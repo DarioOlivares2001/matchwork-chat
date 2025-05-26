@@ -1,0 +1,55 @@
+<div class="dummy-picker" style="padding:1rem; background:#eef; display:flex; gap:1rem; align-items:center;">
+  <label>
+    Tú (ID):
+    <input type="number" [(ngModel)]="currentUserId" style="width:4rem" />
+  </label>
+  <label>
+    Otro (ID):
+    <input type="number" [(ngModel)]="otherUserId" style="width:4rem" />
+  </label>
+  <button (click)="startConversation()">Iniciar Chat</button>
+</div>
+
+<div class="chat-container">
+  <div class="chat-header">
+    <h1>MatchWork Chat</h1>
+    <div class="connection-status">
+      <span class="status-indicator" [ngClass]="connectionStatus"></span>
+      <span class="status-text">{{ connectionStatus }}</span>
+    </div>
+  </div>
+
+  <div class="messages-container" #messagesContainer>
+    <div *ngFor="let message of messages; trackBy: trackMessage"
+         class="message"
+         [ngClass]="{
+           'own-message': message.senderId === currentUserId,
+           'other-message': message.senderId !== currentUserId
+         }">
+      <div class="message-header" *ngIf="message.senderId !== currentUserId">
+        <span class="sender-name">Usuario {{ message.senderId }}</span>
+        <span class="timestamp">{{ message.timestamp | date:'shortTime' }}</span>
+      </div>
+      <div class="message-content">
+        {{ message.content }}
+      </div>
+      <div class="message-time" *ngIf="message.senderId === currentUserId">
+        {{ message.timestamp | date:'shortTime' }}
+      </div>
+    </div>
+    <div *ngIf="messages.length===0" class="empty-state">
+      No hay mensajes aún.
+    </div>
+  </div>
+
+  <div class="input-container">
+    <textarea [(ngModel)]="newMessage"
+              (keydown.enter)="sendMessage()"
+              [disabled]="connectionStatus!=='connected'"
+              placeholder="Escribe tu mensaje..."></textarea>
+    <button (click)="sendMessage()"
+            [disabled]="!newMessage.trim() || connectionStatus!=='connected'">
+      Enviar
+    </button>
+  </div>
+</div>
