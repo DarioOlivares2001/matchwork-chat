@@ -5,16 +5,20 @@ import { RxStompState } from '@stomp/rx-stomp';
 import { BehaviorSubject, Observable, Subscription, Subject } from 'rxjs';
 import { map, distinctUntilChanged } from 'rxjs/operators';
 import { ChatMessage } from '../models/chat-message';
+import { environment } from '../../environments/environment';
 
 @Injectable({ providedIn: 'root' })
 export class WebsocketChatService {
-  private readonly baseUrl = 'http://localhost:8082/api';
+  private readonly baseUrl    = environment.apiUrl;
   private readonly historyUrl = `${this.baseUrl}/messages`;
+
   private activeSubscriptions = new Map<number, Subscription>();
   
-  // ✅ CAMBIO CLAVE: Subject para nuevos mensajes individuales
+  // Subject para nuevos mensajes
   private newMessageSubject = new Subject<ChatMessage>();
   public newMessage$ = this.newMessageSubject.asObservable();
+
+  
   
   public connectionStatus$: Observable<boolean>;
 
@@ -29,80 +33,117 @@ export class WebsocketChatService {
   }
 
   connect(userId: number): void {
+    console.log(`🔌 Conectando usuario ${userId}...`);
+    
+    // Limpiar conexiones previas
     this.disconnect(userId);
+    
+    // Activar conexión STOMP si no está activa
     if (this.rxStomp.connectionState$.getValue() !== RxStompState.OPEN) {
+      console.log('🔄 Activando conexión STOMP...');
       this.rxStomp.activate();
     }
+    
+    // Esperar a que la conexión esté establecida antes de suscribirse
     setTimeout(() => {
-      const topic = `/topic/private.${userId}`;
-      const sub = this.rxStomp.watch(topic).subscribe(frame => {
-        const m: ChatMessage = JSON.parse(frame.body);
-        this.newMessageSubject.next(m);
-      });
-      this.activeSubscriptions.set(userId, sub);
+      this.subscribeToUserMessages(userId);
     }, 500);
   }
 
   private subscribeToUserMessages(userId: number): void {
-    const destination = `/user/${userId}/queue/messages`;
-    console.log(`📡 INTENTANDO suscribirse a: ${destination}`);
-    console.log(`📡 Estado WebSocket: ${this.rxStomp.connectionState$.getValue()}`);
+    // Intentar ambos patrones de destino que podrías estar usando en el backend
+    const destinations = [
+      `/topic/private.${userId}`,
+      `/user/${userId}/queue/messages`
+    ];
     
     // Verificar si ya existe una suscripción para este usuario
     if (this.activeSubscriptions.has(userId)) {
-        console.log(`ℹ️ Ya existe una suscripción activa para el usuario ${userId}`);
-        return;
+      console.log(`ℹ️ Ya existe una suscripción activa para el usuario ${userId}`);
+      return;
+    }
+
+    console.log(`📡 Estado WebSocket: ${this.rxStomp.connectionState$.getValue()}`);
+    
+    // Probar el primer destino (el que estás usando actualmente)
+    const destination = destinations[0]; // `/topic/private.${userId}`
+    console.log(`📡 Suscribiéndose a: ${destination}`);
+
+    try {
+      const subscription = this.rxStomp.watch(destination).subscribe({
+        next: (message) => {
+          console.log('🔔 Mensaje WebSocket recibido en', destination, ':', message);
+          try {
+            const chatMessage: ChatMessage = JSON.parse(message.body);
+            console.log('🔥 MENSAJE PROCESADO:', chatMessage);
+            
+            // Emitir el mensaje (el componente se encargará del filtrado)
+            this.newMessageSubject.next(chatMessage);
+            
+          } catch (e) {
+            console.error('❌ Error procesando mensaje:', e);
+          }
+        },
+        error: (error) => {
+          console.error('❌ ERROR EN SUSCRIPCIÓN:', error);
+          this.activeSubscriptions.delete(userId);
+          // Intentar reconectar después de un error
+          setTimeout(() => this.subscribeToUserMessages(userId), 5000);
+        },
+        complete: () => {
+          console.log('🏁 Suscripción completada para usuario:', userId);
+          this.activeSubscriptions.delete(userId);
+        }
+      });
+
+      this.activeSubscriptions.set(userId, subscription);
+      console.log(`✅ SUSCRIPCIÓN ACTIVA para usuario ${userId} en ${destination}`);
+      
+    } catch (error) {
+      console.error('❌ Error creando suscripción:', error);
+      // Reintentar después de un error
+      setTimeout(() => this.subscribeToUserMessages(userId), 2000);
+    }
+  }
+
+  disconnect(userId: number): void {
+    console.log(`🔌 Desconectando usuario ${userId}...`);
+    const sub = this.activeSubscriptions.get(userId);
+    if (sub) { 
+      sub.unsubscribe(); 
+      this.activeSubscriptions.delete(userId);
+      console.log(`✅ Usuario ${userId} desconectado`);
+    }
+  }
+
+  sendPrivateMessage(message: ChatMessage): void {
+    console.log('📤 Enviando mensaje:', message);
+    
+    if (this.rxStomp.connectionState$.getValue() !== RxStompState.OPEN) {
+      console.error('❌ WebSocket no está conectado');
+      return;
     }
 
     try {
-        const subscription = this.rxStomp.watch(destination).subscribe({
-            next: (message) => {
-                console.log('🔔 Mensaje WebSocket recibido:', message);
-                try {
-                    const chatMessage: ChatMessage = JSON.parse(message.body);
-                    console.log('🔥🔥🔥 MENSAJE RECIBIDO VIA WEBSOCKET:', chatMessage);
-                    
-                    // Emitir el mensaje sin filtrar (el componente se encargará del filtrado)
-                    this.newMessageSubject.next(chatMessage);
-                    
-                } catch (e) {
-                    console.error('❌ Error procesando mensaje:', e);
-                }
-            },
-            error: (error) => {
-                console.error('❌❌❌ ERROR EN SUSCRIPCIÓN:', error);
-                this.activeSubscriptions.delete(userId);
-                // Intentar reconectar después de un error
-                setTimeout(() => this.subscribeToUserMessages(userId), 5000);
-            },
-            complete: () => {
-                console.log('🏁 Suscripción completada para usuario:', userId);
-                this.activeSubscriptions.delete(userId);
-            }
-        });
-
-        this.activeSubscriptions.set(userId, subscription);
-        console.log(`✅✅✅ SUSCRIPCIÓN ACTIVA para usuario ${userId}`);
-        
+      // Asegurar que el tipo esté definido
+      const messageToSend = {
+        ...message,
+        type: message.type || 'CHAT'
+      };
+      
+      this.rxStomp.publish({
+        destination: '/app/chat.sendPrivateMessage',
+        body: JSON.stringify(messageToSend),
+        headers: { 
+          'content-type': 'application/json',
+          'message-type': message.type // Header adicional
+        }
+      });
     } catch (error) {
-        console.error('❌ Error creando suscripción:', error);
-        // Reintentar después de un error
-        setTimeout(() => this.subscribeToUserMessages(userId), 5000);
+      console.error('❌ Error enviando mensaje:', error);
+      // Reconectar si hay error
+      setTimeout(() => this.connect(message.senderId), 2000);
     }
-}
-
-  disconnect(userId: number): void {
-    const sub = this.activeSubscriptions.get(userId);
-    if (sub) { sub.unsubscribe(); this.activeSubscriptions.delete(userId); }
-  }
-
-  // En el servicio WebSocketChatService, modifica sendPrivateMessage:
-  sendPrivateMessage(message: ChatMessage): void {
-    this.rxStomp.publish({
-      destination: '/app/chat.sendPrivateMessage',
-      body: JSON.stringify(message),
-      headers: { 'content-type': 'application/json' }
-    });
   }
 
   getMessageHistory(senderId: number, receiverId: number): Observable<ChatMessage[]> {
@@ -110,8 +151,15 @@ export class WebsocketChatService {
     return this.http.get<ChatMessage[]>(`${this.historyUrl}/${senderId}/${receiverId}`);
   }
 
-  // ✅ Método para limpiar suscripciones
-  clearNewMessages(): void {
-    // No necesitamos limpiar el Subject, solo las suscripciones
+  // Método para debug - verificar estado de conexiones
+  getActiveSubscriptions(): number[] {
+    return Array.from(this.activeSubscriptions.keys());
+  }
+
+  // Método para forzar reconexión
+  forceReconnect(userId: number): void {
+    console.log('🔄 Forzando reconexión...');
+    this.disconnect(userId);
+    setTimeout(() => this.connect(userId), 1000);
   }
 }

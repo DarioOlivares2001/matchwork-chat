@@ -37,19 +37,61 @@
         {{ message.timestamp | date:'shortTime' }}
       </div>
     </div>
-    <div *ngIf="messages.length===0" class="empty-state">
+    <div *ngIf="messages.length === 0" class="empty-state">
       No hay mensajes aún.
     </div>
   </div>
 
   <div class="input-container">
-    <textarea [(ngModel)]="newMessage"
-              (keydown.enter)="sendMessage()"
-              [disabled]="connectionStatus!=='connected'"
-              placeholder="Escribe tu mensaje..."></textarea>
-    <button (click)="sendMessage()"
-            [disabled]="!newMessage.trim() || connectionStatus!=='connected'">
-      Enviar
-    </button>
+    <div class="input-wrapper">
+      <textarea 
+        class="message-input"
+        [(ngModel)]="newMessage"
+        (keydown)="onKeyDown($event)"
+        [disabled]="connectionStatus !== 'connected'"
+        placeholder="Escribe tu mensaje..."></textarea>
+      <button 
+        class="send-button"
+        (click)="sendMessage()"
+        [disabled]="!newMessage.trim() || connectionStatus !== 'connected'">
+        Enviar
+      </button>
+    </div>
+    
+    <!-- Botón de entrevista mejorado -->
+    <div class="video-controls">
+      <button class="entrevistar-btn"
+              [disabled]="connectionStatus !== 'connected'"
+              (click)="startVideoCall()">
+        📹 Iniciar Entrevista
+      </button>
+      <span *ngIf="showVideo" class="video-status">
+        🔴 En videollamada
+      </span>
+    </div>
   </div>
+</div>
+
+
+<!-- Agrega esto al final del template -->
+<div class="video-invitation-overlay" *ngIf="showVideoInvitation">
+  <div class="video-invitation-modal">
+    <h3>Invitación a Videollamada</h3>
+    <p>Usuario {{ videoInvitationFrom }} te está invitando a una entrevista.</p>
+    <div class="invitation-buttons">
+      <button class="accept-btn" (click)="acceptVideoCall()">Aceptar</button>
+      <button class="decline-btn" (click)="declineVideoCall()">Rechazar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Overlay de Jitsi con método de cierre actualizado -->
+<app-jitsi
+  *ngIf="showVideo"
+  [roomName]="videoRoomName"
+  (close)="closeVideoCall()">
+</app-jitsi>
+
+<div *ngIf="isInVideoCall" class="video-call-status">
+  <span>🔴 En videollamada</span>
 </div>
